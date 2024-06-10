@@ -152,7 +152,7 @@ void command_service(){
     WiFi.disconnect(true);
     Serial.print("ssid: ");
     if(temp_text.length() > 0){
-      for (int index = 0; index < EEPROM_SIZE_CONFIG; index++) {
+      for (int index = 0; index < EEPROM_SIZE; index++) {
         if(index < temp_text.length()){
           Serial.print(temp_text[index]);
           ssid[index] = temp_text[index];
@@ -170,7 +170,7 @@ void command_service(){
     WiFi.disconnect(true);
     Serial.print("pass: ");
     if(temp_text.length() > 0){
-      for (int index = 0; index < EEPROM_SIZE_CONFIG; index++) {
+      for (int index = 0; index < EEPROM_SIZE; index++) {
         if(index < temp_text.length()){
           Serial.print(temp_text[index]);
           password[index] = temp_text[index];
@@ -231,7 +231,6 @@ void command_service(){
   }
 }
 void command_process(char ch) {
-  uart_type = type_uart;
   if(ch=='\n'){
     command_buf[command_num] = 0x00;
     command_num = 0;
