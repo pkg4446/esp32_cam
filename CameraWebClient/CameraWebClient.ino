@@ -47,9 +47,10 @@ WebsocketsClient client;
 unsigned long pre_update = 0UL;
 /***************Variable*******************/
 char    command_buf[COMMAND_LENGTH];
-int8_t  command_num = 0;
-String  path_current = "/";
-bool    wifi_able = false;
+int8_t  command_num   = 0;
+uint8_t path_depth    = 0;
+String  path_current  = "/";
+bool    wifi_able     = false;
 /***************Functions******************/
 void wifi_config() {
   serial_wifi_config(&Serial,ssid,password);
