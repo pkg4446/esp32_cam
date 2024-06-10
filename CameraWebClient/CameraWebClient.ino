@@ -1,10 +1,15 @@
 #include <ArduinoWebsockets.h>
 #include <WiFi.h>
-#include "esp_camera.h"
+#include <esp_camera.h>
+#include <EEPROM.h>
+#include <SPI.h>
+#include <SD.h>
+#include <FS.h>
+#include "filesys_esp.h"
+#include "uart_print.h"
 
-#include "EEPROM.h"
-#define SERIAL_MAX  32
-#define EEPROM_SIZE 16
+#define COMMAND_LENGTH  32
+#define EEPROM_SIZE     16
 /******************EEPROM******************/
 const uint8_t eep_ssid[EEPROM_SIZE] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
 const uint8_t eep_pass[EEPROM_SIZE] = {16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
@@ -39,56 +44,202 @@ WebsocketsClient client;
 // 4 for flash led or 33 for normal led
 #define LED_GPIO_NUM       4
 /*******************************************/
-/*******************************************/
-// ===========================
-// Enter your WiFi credentials
-// ===========================
-char    Serial_buf[SERIAL_MAX];
-int8_t  Serial_num;
-void wifi_config_change() {
-  String at_cmd     = strtok(Serial_buf, "=");
-  String ssid_value = strtok(NULL, "=");
-  String pass_value = strtok(NULL, ";");
-  if(at_cmd=="AT+WIFI"){
-    Serial.print("ssid_value=");
-    for (int index = 0; index < EEPROM_SIZE; index++) {
-      if(index < ssid_value.length()){
-        Serial.print(ssid_value[index]);
-        EEPROM.write(eep_ssid[index], byte(ssid_value[index]));
-      }else{
-        EEPROM.write(eep_ssid[index], byte(0x00));
-      }      
+unsigned long pre_update = 0UL;
+/***************Variable*******************/
+char    command_buf[COMMAND_LENGTH];
+int8_t  command_num = 0;
+String  path_current = "/";
+bool    wifi_able = false;
+/***************Functions******************/
+void wifi_config() {
+  serial_wifi_config(&Serial,ssid,password);
+}
+/******************************************/
+void WIFI_scan(bool wifi_state){
+  wifi_able = wifi_state;
+  WiFi.disconnect(true);
+  Serial.println("WIFI Scanning…");
+  uint8_t networks = WiFi.scanNetworks();
+  if (networks == 0) {
+    Serial.println("WIFI not found!");
+  }else {
+    Serial.print(networks);
+    Serial.println(" networks found");
+    Serial.println("Nr | SSID                             | RSSI | CH | Encryption");
+    String wifi_list ="";
+    for (int index = 0; index < networks; ++index) {
+      // Print SSID and RSSI for each network found
+      Serial.printf("%2d",index + 1);
+      Serial.print(" | ");
+      Serial.printf("%-32.32s", WiFi.SSID(index).c_str());
+      Serial.print(" | ");
+      Serial.printf("%4d", WiFi.RSSI(index));
+      Serial.print(" | ");
+      Serial.printf("%2d", WiFi.channel(index));
+      Serial.print(" | ");
+      byte wifi_type = WiFi.encryptionType(index);
+      String wifi_encryptionType;
+      if(wifi_type == WIFI_AUTH_OPEN){wifi_encryptionType = "open";}
+      else if(wifi_type == WIFI_AUTH_WEP){wifi_encryptionType = "WEP";}
+      else if(wifi_type == WIFI_AUTH_WPA_PSK){wifi_encryptionType = "WPA";}
+      else if(wifi_type == WIFI_AUTH_WPA2_PSK){wifi_encryptionType = "WPA2";}
+      else if(wifi_type == WIFI_AUTH_WPA_WPA2_PSK){wifi_encryptionType = "WPA2";}
+      else if(wifi_type == WIFI_AUTH_WPA2_ENTERPRISE){wifi_encryptionType = "WPA2-EAP";}
+      else if(wifi_type == WIFI_AUTH_WPA3_PSK){wifi_encryptionType = "WPA3";}
+      else if(wifi_type == WIFI_AUTH_WPA2_WPA3_PSK){wifi_encryptionType = "WPA2+WPA3";}
+      else if(wifi_type == WIFI_AUTH_WAPI_PSK){wifi_encryptionType = "WAPI";}
+      else{wifi_encryptionType = "unknown";}
+      Serial.println(wifi_encryptionType);
     }
-    Serial.println("");
-    Serial.print("pass_value=");
-    for (int index = 0; index < EEPROM_SIZE; index++) {
-      if(index < pass_value.length()){
-        Serial.print(pass_value[index]);
-        EEPROM.write(eep_pass[index], byte(pass_value[index]));
-      }else{
-        EEPROM.write(eep_pass[index], byte(0x00));
-      }    
-    }
-    Serial.println("");
-    EEPROM.commit();
-    ESP.restart();
-  }else{
-    Serial.println(Serial_buf);
   }
-}//Command_service() END
-void Serial_process() {
-  char ch;
-  ch = Serial.read();
-  switch ( ch ) {
-    case ';':
-      Serial_buf[Serial_num] = 0x00;
-      wifi_config_change();
-      Serial_num = 0;
+  // Delete the scan result to free memory for code below.
+  WiFi.scanDelete();
+  if(wifi_able){
+    wifi_connect();
+  }
+}
+/******************************************/
+void wifi_connect() {
+  wifi_config();
+  wifi_able = true;
+  WiFi.disconnect(true);
+  WiFi.setSleep(false);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  unsigned long wifi_config_update  = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    unsigned long update_time = millis();
+    if(update_time - wifi_config_update > 5000){
+      wifi_able = false;
       break;
-    default :
-      Serial_buf[ Serial_num ++ ] = ch;
-      Serial_num %= SERIAL_MAX;
+    }
+  }
+  Serial.println("WIFI connected");
+  if(! wifi_able)Serial.println("fail");
+}
+/******************************************/
+void command_service(){
+  String cmd_text     = "";
+  String temp_text    = "";
+  bool   eep_change   = false;
+  uint8_t check_index = 0;
+  
+  for(uint8_t index_check=0; index_check<COMMAND_LENGTH; index_check++){
+    if(command_buf[index_check] == 0x20 || command_buf[index_check] == 0x00){
+      check_index = index_check+1;
       break;
+    }
+    cmd_text += command_buf[index_check];
+  }
+  for(uint8_t index_check=check_index; index_check<COMMAND_LENGTH; index_check++){
+    if(command_buf[index_check] == 0x20 || command_buf[index_check] == 0x00){
+      check_index = index_check+1;
+      break;
+    }
+    temp_text += command_buf[index_check];
+  }
+  String file_path = path_current+"/"+temp_text;
+  /**********/
+  Serial.print("cmd: ");
+  Serial.println(cmd_text);
+
+  if(cmd_text=="help"){
+    serial_command_help(&Serial);
+  }else if(cmd_text=="reboot"){
+    ESP.restart();
+  }else if(cmd_text=="ssid"){
+    wifi_able = false;
+    WiFi.disconnect(true);
+    Serial.print("ssid: ");
+    if(temp_text.length() > 0){
+      for (int index = 0; index < EEPROM_SIZE_CONFIG; index++) {
+        if(index < temp_text.length()){
+          Serial.print(temp_text[index]);
+          ssid[index] = temp_text[index];
+          EEPROM.write(eep_ssid[index], byte(temp_text[index]));
+        }else{
+          ssid[index] = 0x00;
+          EEPROM.write(eep_ssid[index], byte(0x00));
+        }
+      }
+      eep_change = true;
+    }
+    Serial.println("");
+  }else if(cmd_text=="pass"){
+    wifi_able = false;
+    WiFi.disconnect(true);
+    Serial.print("pass: ");
+    if(temp_text.length() > 0){
+      for (int index = 0; index < EEPROM_SIZE_CONFIG; index++) {
+        if(index < temp_text.length()){
+          Serial.print(temp_text[index]);
+          password[index] = temp_text[index];
+          EEPROM.write(eep_pass[index], byte(temp_text[index]));
+        }else{
+          password[index] = 0x00;
+          EEPROM.write(eep_pass[index], byte(0x00));
+        }
+      }
+      eep_change = true;
+    }
+    Serial.println("");
+  }else if(cmd_text=="wifi"){
+    if(temp_text=="stop"){
+      wifi_able = false;
+      Serial.print("WIFI disconnect");
+      WiFi.disconnect(true);
+    }else if(temp_text=="scan"){
+      WIFI_scan(WiFi.status() == WL_CONNECTED);
+    }else{
+      wifi_connect();
+    }
+  }else if(cmd_text=="ls"){
+    dir_list(path_current+"/"+temp_text,true,true);
+  }else if(cmd_text=="cd"){
+    if(temp_text == "/"){
+      path_depth   = 0;
+      path_current = "/";
+    }else if(temp_text == ".." && path_depth != 0){
+      String temp_path = path_current;
+      char *upper_path = const_cast<char*>(temp_path.c_str());
+      String dir_path  = strtok(upper_path, "/");
+      if(path_depth == 1) path_current = "/";
+      else path_current = "";
+      for(uint8_t index=1; index<path_depth; index++){
+        path_current += "/" + dir_path;
+        dir_path = strtok(0x00, "/");
+      }
+      path_depth -= 1;
+    }else if(exisits_check(file_path)){
+      path_depth += 1;
+      if(path_current == "/") path_current += temp_text;
+      else path_current += "/"+temp_text;
+    }
+    Serial.println(path_current);
+  }else if(cmd_text=="md"){
+    dir_make(file_path);
+  }else if(cmd_text=="rd"){
+    dir_remove(file_path);
+  }else if(cmd_text=="op"){
+    file_stream(file_path);
+  }else if(cmd_text=="rf"){
+    if(temp_text == "*") files_all_remove(path_current);
+    else file_remove(file_path);
+  }else{ serial_err_msg(&Serial, command_buf); }
+  if(eep_change){
+    EEPROM.commit();
+  }
+}
+void command_process(char ch) {
+  uart_type = type_uart;
+  if(ch=='\n'){
+    command_buf[command_num] = 0x00;
+    command_num = 0;
+    command_service();
+    memset(command_buf, 0x00, COMMAND_LENGTH);
+  }else if(ch!='\r'){
+    command_buf[command_num++] = ch;
+    command_num %= COMMAND_LENGTH;
   }
 }
 /*******************************************/
@@ -97,6 +248,11 @@ size_t frame_length = 0;
 
 void setup() {
   Serial.begin(115200);
+  //SS=13,MOSI=15,SCK=14, MISO=2
+  //SPI.begin(SCK, MISO, MOSI, SS);
+  SPI.begin(14, 2, 15, 13);
+  //chipSelect = SS
+  sd_init(13);
   if (!EEPROM.begin(EEPROM_SIZE*2)){
     Serial.println("Failed to initialise eeprom");
     Serial.println("Restarting...");
@@ -107,29 +263,10 @@ void setup() {
     ssid[index]     = EEPROM.read(eep_ssid[index]);
     password[index] = EEPROM.read(eep_pass[index]);
   }
-  Serial.println("------- wifi config -------");
-  Serial.println("AT+WIFI=SSID=PASS;");
-  Serial.print("ssid: "); Serial.println(ssid);
-  Serial.print("pass: "); Serial.println(password);
-  Serial.println("---------------------------");
-  // Connect to WiFi
-  WiFi.disconnect(true);
-  WiFi.begin(ssid, password);
-  unsigned long wifi_config_update = 0UL;
-  while (WiFi.status() != WL_CONNECTED) {
-    if (Serial.available()) Serial_process();
-    unsigned long update_time = millis();
-    if(update_time - wifi_config_update > 3000){
-      wifi_config_update = update_time;
-      Serial.println("Connecting to WiFi..");
-    }
-  }
-  
-  WiFi.setSleep(false);
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("Connected to WiFi");
 
+  // Connect to WiFi
+  wifi_connect();
+  
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -157,7 +294,7 @@ void setup() {
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 4;
   config.fb_count = 1;
-
+  
     // Initialize the camera
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
@@ -166,12 +303,14 @@ void setup() {
     }
 
     // Connect to WebSocket server
-    client.connect(websockets_server_host, websockets_server_port, "/");
+    if(wifi_able) client.connect(websockets_server_host, websockets_server_port, "/");
 }
 
 void loop() {
-    client.poll();
-
+  unsigned long millisec = millis();
+  client.poll();
+  if(millisec > pre_update + 100){
+    pre_update = millisec;
     camera_fb_t * fb = esp_camera_fb_get();
     if (fb) {
         // 카메라 프레임 및 길이를 전역 변수에 저장
@@ -182,5 +321,6 @@ void loop() {
         client.sendBinary(reinterpret_cast<char*>(camera_frame), frame_length);
         esp_camera_fb_return(fb);
     }
-    delay(100);
+  }
+  if(Serial.available()) command_process(Serial.read());
 }
