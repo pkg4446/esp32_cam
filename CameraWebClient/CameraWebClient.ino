@@ -8,8 +8,10 @@
 #include "filesys_esp.h"
 #include "uart_print.h"
 
-#define COMMAND_LENGTH  32
-#define EEPROM_SIZE     16
+#define COMMAND_LENGTH    32
+#define EEPROM_SIZE       16
+#define LED_GPIO_NUM      4
+
 /******************EEPROM******************/
 const uint8_t eep_ssid[EEPROM_SIZE] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
 const uint8_t eep_pass[EEPROM_SIZE] = {16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
@@ -45,15 +47,17 @@ WebsocketsClient client;
 #define LED_GPIO_NUM       4
 /*******************************************/
 unsigned long pre_update  = 0UL;
+unsigned long pre_ping    = 0UL;
 uint16_t frame_per_second = 100;
+uint8_t  ping_res         = 0;
 /***************Variable*******************/
 char    command_buf[COMMAND_LENGTH];
 int8_t  command_num   = 0;
 uint8_t path_depth    = 0;
 String  path_current  = "/";
 bool    wifi_able     = false;
-bool    camera_onoff  = true;
-bool    sd_card_mode  = true;
+bool    camera_onoff  = false;
+bool    sd_card_mode  = false;
 /***************Functions******************/
 void wifi_config() {
   serial_wifi_config(&Serial,ssid,password);
@@ -145,11 +149,12 @@ void command_service(){
   String file_path = path_current+"/"+temp_text;
   /**********/
   Serial.print("cmd: ");
-  Serial.println(cmd_text);
+  Serial.println(command_buf);
 
   if(cmd_text=="help"){
     serial_command_help(&Serial,sd_card_mode);
   }else if(cmd_text=="reboot"){
+    esp_camera_deinit();
     ESP.restart();
   }else if(cmd_text=="ssid"){
     wifi_able = false;
@@ -196,10 +201,16 @@ void command_service(){
       WIFI_scan(WiFi.status() == WL_CONNECTED);
     }else{
       wifi_connect();
-    }
+    } 
+  }else if(cmd_text=="led"){
+    uint8_t duty = temp_text.toInt();
+    ledcWrite(LED_GPIO_NUM, duty);
   }else if(cmd_text=="fps"){
     uint8_t cmd_fps = temp_text.toInt();
-    frame_per_second = 1000/cmd_fps;
+    if(cmd_fps!=0) frame_per_second = 1000/cmd_fps;
+    Serial.print("frame interval: ");Serial.println(frame_per_second);
+  }else if(cmd_text=="size"){
+    frame_size_change(temp_text.toInt());
   }else if(cmd_text=="cam"){
     if(temp_text=="on") camera_onoff = true;
     else camera_onoff = false;
@@ -263,6 +274,7 @@ void setup() {
   //SPI.begin(SCK, MISO, MOSI, SS);
   SPI.begin(14, 2, 15, 13);
   //chipSelect = SS
+  ledcAttach(LED_GPIO_NUM, 5000, 8);
   sd_init(13,&sd_card_mode);
   if (!EEPROM.begin(EEPROM_SIZE*2)){
     Serial.println("Failed to initialise eeprom");
@@ -274,9 +286,6 @@ void setup() {
     ssid[index]     = EEPROM.read(eep_ssid[index]);
     password[index] = EEPROM.read(eep_pass[index]);
   }
-
-  // Connect to WiFi
-  wifi_connect();
   
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -306,32 +315,88 @@ void setup() {
   config.jpeg_quality = 4;
   config.fb_count = 1;
   
-    // Initialize the camera
-    esp_err_t err = esp_camera_init(&config);
-    if (err != ESP_OK) {
-        Serial.printf("Camera init failed with error 0x%x", err);
-        return;
-    }
+  // Initialize the camera
+  esp_err_t err = esp_camera_init(&config);
+  sensor_t *s = esp_camera_sensor_get();
 
-    // Connect to WebSocket server
-    if(wifi_able) client.connect(websockets_server_host, websockets_server_port, "/");
+  if (err != ESP_OK) {
+    esp_camera_deinit();
+    Serial.printf("Camera init failed with error 0x%x", err);
+    ESP.restart();
+  }
+  // Connect to WiFi
+  wifi_connect();
+  // Connect to WebSocket server
+  if(wifi_able){
+    client.connect(websockets_server_host, websockets_server_port, "/");
+    client.onMessage(onMessageCallback);
+    client.onEvent(onEventsCallback);
+    client.send("MAC:"+WiFi.macAddress());
+  }
 }
 
 void loop() {
   unsigned long millisec = millis();
-  client.poll();
-  if(camera_onoff && millisec > pre_update + frame_per_second){
-    pre_update = millisec;
-    camera_fb_t * fb = esp_camera_fb_get();
-    if (fb) {
-        // 카메라 프레임 및 길이를 전역 변수에 저장
-        camera_frame = fb->buf;
-        frame_length = fb->len;
-
-        // WebSocket을 통해 바이너리 데이터 전송
-        client.sendBinary(reinterpret_cast<char*>(camera_frame), frame_length);
-        esp_camera_fb_return(fb);
+  if(wifi_able){
+    if(client.available()){
+      client.poll();
+      if(camera_onoff && millisec > pre_update + frame_per_second){
+        pre_update = millisec;
+        camera_fb_t * fb = esp_camera_fb_get();
+        if (fb) {
+            // 카메라 프레임 및 길이를 전역 변수에 저장
+            camera_frame = fb->buf;
+            frame_length = fb->len;
+            // WebSocket을 통해 바이너리 데이터 전송
+            client.sendBinary(reinterpret_cast<char*>(camera_frame), frame_length);
+            esp_camera_fb_return(fb);
+        }
+      }
+      if(millisec > pre_ping + 2500){
+        pre_ping = millisec;
+        if(ping_res++ > 2){
+          esp_camera_deinit();
+          ESP.restart();
+        }
+        client.ping();
+      }
+    }else{
+      if(millisec > pre_ping + 2500){
+        pre_ping = millisec;
+        if(ping_res++ > 2){
+          esp_camera_deinit();
+          ESP.restart();
+        }
+      }
     }
   }
   if(Serial.available()) command_process(Serial.read());
+}
+
+void frame_size_change(uint8_t frame_size){
+  //if(frame_size>12) frame_size = 12;
+  if(frame_size>6) frame_size = 6;
+  sensor_t *s = esp_camera_sensor_get();
+  if (s->pixformat == PIXFORMAT_JPEG) {
+    Serial.println(s->set_framesize(s, (framesize_t)frame_size));
+    frame_per_second = 10 + frame_size*10;
+  }
+}
+
+void onMessageCallback(WebsocketsMessage message) {
+  Serial.print("Got Message: ");
+  for(uint8_t index=0; index<message.data().length(); index++){
+    command_process(message.data()[index]);
+  }
+  //Serial.println(message.data());
+}
+
+void onEventsCallback(WebsocketsEvent event, String data) {
+  if(event == WebsocketsEvent::ConnectionClosed) {
+    Serial.print("server err!");
+    esp_camera_deinit();
+    ESP.restart();
+  } else if(event == WebsocketsEvent::GotPong) {
+    ping_res=0;
+  }
 }

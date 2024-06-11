@@ -10,26 +10,28 @@
   <img id="image" src="#" alt="Received Image" style="display: none;">
 
   <script>
-    const ws = new WebSocket('ws://localhost:3000');
+    const socket = new WebSocket('ws://localhost:3000');
 
-    ws.onopen = function() {
-      console.log('WebSocket connection established.');
+    socket.onopen = function() {
+      socket.send("CAM:24:DC:C3:A1:5C:30");
     };
 
-    ws.onmessage = function(event) {
+    socket.onmessage = function(event) {
       // 수신된 바이너리 데이터를 Blob으로 변환
-      const blob = new Blob([event.data], { type: 'image/jpeg' });
-
-      // Blob URL을 생성하여 이미지 요소의 src에 설정
-      const imageUrl = URL.createObjectURL(blob);
-      const imageElement = document.getElementById('image');
-      imageElement.src = imageUrl;
-
-      // 이미지 표시
-      imageElement.style.display = 'block';
+      if(event.data.length == undefined){
+        const blob = new Blob([event.data], { type: 'image/jpeg' });
+        // Blob URL을 생성하여 이미지 요소의 src에 설정
+        const imageUrl = URL.createObjectURL(blob);
+        const imageElement = document.getElementById('image');
+        imageElement.src = imageUrl;
+        // 이미지 표시
+        imageElement.style.display = 'block';
+      }else if(event.data==="interrupted"){
+        alert("다른 사용자가 접속했습니다.");
+      }
     };
 
-    ws.onclose = function() {
+    socket.onclose = function() {
       console.log('WebSocket connection closed.');
     };
   </script>

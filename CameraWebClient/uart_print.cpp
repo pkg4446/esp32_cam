@@ -29,7 +29,9 @@ void serial_command_help(HardwareSerial *uart, bool sdcard) {
   uart->println("wifi    * WIFI connet");
   uart->println("   scan * WIFI scan");
   uart->println("   stop * WIFI disconnet");
+  uart->println("led     * LED light");
   uart->println("fps     * frame per second");
+  uart->println("size    * cam pixel size");
   uart->println("cam     * ");
   uart->println("   on   * cam on");
   uart->println("   off  * cam off");

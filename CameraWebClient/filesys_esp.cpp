@@ -4,35 +4,42 @@ void sd_init(uint8_t chipSelect, bool *card_insert) {
   // Open serial communications and wait for port to open:
   bool sd_flage = SD.begin(chipSelect);
   
-  String check_sd = "";
   for(uint16_t index=0; index<strlen_P(check_sdcard1); index++){
-      check_sd += char(pgm_read_byte_near(check_sdcard1+index));
+      Serial.print(char(pgm_read_byte_near(check_sdcard1+index)));
   }
-  Serial.println(check_sd);
-
-  check_sd = "";
+  Serial.println();
   if (sd_flage) {
-    for(uint16_t index=0; index<strlen_P(check_sdcard3); index++){
-        check_sd += char(pgm_read_byte_near(check_sdcard3+index));
-    }
-  }
-  Serial.print(check_sd);
-  uint8_t sdcard_check = 0;
-  while (!SD.begin(chipSelect))
-  {
-    Serial.println();
     for(uint16_t index=0; index<strlen_P(check_sdcard2); index++){
         Serial.print(char(pgm_read_byte_near(check_sdcard2+index)));
-        delay(20);
     }
-    if(sdcard_check++ > 1){
+  }
+  Serial.println();
+  bool sdcard_check = false;
+  while (!SD.begin(chipSelect))
+  {
+    if(sdcard_check){
+      for(uint16_t index=0; index<strlen_P(check_sdcard4); index++){
+        Serial.print(char(pgm_read_byte_near(check_sdcard4+index)));
+      }
+      for(uint16_t index=0; index<strlen_P(check_sdcard2); index++){
+        Serial.print(char(pgm_read_byte_near(check_sdcard2+index)));
+      }
+    }else{
+      for(uint16_t index=0; index<strlen_P(check_sdcard3); index++){
+        Serial.print(char(pgm_read_byte_near(check_sdcard3+index)));
+        delay(20);
+      }
+    }
+    Serial.println();
+    if(sdcard_check > 0){
       Serial.println();
       *card_insert = false;
       return;
+    }else{
+      sdcard_check = true;
     }
   }
   *card_insert = true;
-  Serial.println();
 }
 
 bool exisits_check(String path){
