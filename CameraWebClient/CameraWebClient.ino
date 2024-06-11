@@ -17,7 +17,7 @@ const uint8_t eep_pass[EEPROM_SIZE] = {16,17,18,19,20,21,22,23,24,25,26,27,28,29
 char ssid[EEPROM_SIZE];
 char password[EEPROM_SIZE]; 
 /******************CARMERA******************/
-const char* websockets_server_host = "192.168.1.15";
+const char* websockets_server_host    = "192.168.1.15";
 const uint16_t websockets_server_port = 3000;
 
 using namespace websockets;
@@ -44,13 +44,16 @@ WebsocketsClient client;
 // 4 for flash led or 33 for normal led
 #define LED_GPIO_NUM       4
 /*******************************************/
-unsigned long pre_update = 0UL;
+unsigned long pre_update  = 0UL;
+uint16_t frame_per_second = 100;
 /***************Variable*******************/
 char    command_buf[COMMAND_LENGTH];
 int8_t  command_num   = 0;
 uint8_t path_depth    = 0;
 String  path_current  = "/";
 bool    wifi_able     = false;
+bool    camera_onoff  = true;
+bool    sd_card_mode  = true;
 /***************Functions******************/
 void wifi_config() {
   serial_wifi_config(&Serial,ssid,password);
@@ -145,7 +148,7 @@ void command_service(){
   Serial.println(cmd_text);
 
   if(cmd_text=="help"){
-    serial_command_help(&Serial);
+    serial_command_help(&Serial,sd_card_mode);
   }else if(cmd_text=="reboot"){
     ESP.restart();
   }else if(cmd_text=="ssid"){
@@ -194,38 +197,46 @@ void command_service(){
     }else{
       wifi_connect();
     }
-  }else if(cmd_text=="ls"){
-    dir_list(path_current+"/"+temp_text,true,true);
-  }else if(cmd_text=="cd"){
-    if(temp_text == "/"){
-      path_depth   = 0;
-      path_current = "/";
-    }else if(temp_text == ".." && path_depth != 0){
-      String temp_path = path_current;
-      char *upper_path = const_cast<char*>(temp_path.c_str());
-      String dir_path  = strtok(upper_path, "/");
-      if(path_depth == 1) path_current = "/";
-      else path_current = "";
-      for(uint8_t index=1; index<path_depth; index++){
-        path_current += "/" + dir_path;
-        dir_path = strtok(0x00, "/");
+  }else if(cmd_text=="fps"){
+    uint8_t cmd_fps = temp_text.toInt();
+    frame_per_second = 1000/cmd_fps;
+  }else if(cmd_text=="cam"){
+    if(temp_text=="on") camera_onoff = true;
+    else camera_onoff = false;
+  }else if(sd_card_mode){
+    if(cmd_text=="ls"){
+      dir_list(path_current+"/"+temp_text,true,true);
+    }else if(cmd_text=="cd"){
+      if(temp_text == "/"){
+        path_depth   = 0;
+        path_current = "/";
+      }else if(temp_text == ".." && path_depth != 0){
+        String temp_path = path_current;
+        char *upper_path = const_cast<char*>(temp_path.c_str());
+        String dir_path  = strtok(upper_path, "/");
+        if(path_depth == 1) path_current = "/";
+        else path_current = "";
+        for(uint8_t index=1; index<path_depth; index++){
+          path_current += "/" + dir_path;
+          dir_path = strtok(0x00, "/");
+        }
+        path_depth -= 1;
+      }else if(exisits_check(file_path)){
+        path_depth += 1;
+        if(path_current == "/") path_current += temp_text;
+        else path_current += "/"+temp_text;
       }
-      path_depth -= 1;
-    }else if(exisits_check(file_path)){
-      path_depth += 1;
-      if(path_current == "/") path_current += temp_text;
-      else path_current += "/"+temp_text;
+      Serial.println(path_current);
+    }else if(cmd_text=="md"){
+      dir_make(file_path);
+    }else if(cmd_text=="rd"){
+      dir_remove(file_path);
+    }else if(cmd_text=="op"){
+      file_stream(file_path);
+    }else if(cmd_text=="rf"){
+      if(temp_text == "*") files_all_remove(path_current);
+      else file_remove(file_path);
     }
-    Serial.println(path_current);
-  }else if(cmd_text=="md"){
-    dir_make(file_path);
-  }else if(cmd_text=="rd"){
-    dir_remove(file_path);
-  }else if(cmd_text=="op"){
-    file_stream(file_path);
-  }else if(cmd_text=="rf"){
-    if(temp_text == "*") files_all_remove(path_current);
-    else file_remove(file_path);
   }else{ serial_err_msg(&Serial, command_buf); }
   if(eep_change){
     EEPROM.commit();
@@ -252,7 +263,7 @@ void setup() {
   //SPI.begin(SCK, MISO, MOSI, SS);
   SPI.begin(14, 2, 15, 13);
   //chipSelect = SS
-  sd_init(13);
+  sd_init(13,&sd_card_mode);
   if (!EEPROM.begin(EEPROM_SIZE*2)){
     Serial.println("Failed to initialise eeprom");
     Serial.println("Restarting...");
@@ -309,7 +320,7 @@ void setup() {
 void loop() {
   unsigned long millisec = millis();
   client.poll();
-  if(millisec > pre_update + 100){
+  if(camera_onoff && millisec > pre_update + frame_per_second){
     pre_update = millisec;
     camera_fb_t * fb = esp_camera_fb_get();
     if (fb) {

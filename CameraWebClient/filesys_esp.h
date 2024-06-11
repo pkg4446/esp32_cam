@@ -10,7 +10,7 @@ const PROGMEM char check_sdcard3[]  = "시스템을 시작합니다.";
 
 #define   CMD_UNIT_SIZE   1436
 
-void     sd_init(uint8_t chipSelect);
+void     sd_init(uint8_t chipSelect, bool *card_insert);
 bool     exisits_check(String path);
 
 void     dir_make(String path);

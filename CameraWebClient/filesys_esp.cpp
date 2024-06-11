@@ -1,6 +1,6 @@
 #include "filesys_esp.h"
 
-void sd_init(uint8_t chipSelect) {
+void sd_init(uint8_t chipSelect, bool *card_insert) {
   // Open serial communications and wait for port to open:
   bool sd_flage = SD.begin(chipSelect);
   
@@ -17,6 +17,7 @@ void sd_init(uint8_t chipSelect) {
     }
   }
   Serial.print(check_sd);
+  uint8_t sdcard_check = 0;
   while (!SD.begin(chipSelect))
   {
     Serial.println();
@@ -24,7 +25,13 @@ void sd_init(uint8_t chipSelect) {
         Serial.print(char(pgm_read_byte_near(check_sdcard2+index)));
         delay(20);
     }
+    if(sdcard_check++ > 1){
+      Serial.println();
+      *card_insert = false;
+      return;
+    }
   }
+  *card_insert = true;
   Serial.println();
 }
 
