@@ -49,6 +49,7 @@ socket.on('connection', function connection(ws) {
         if(clients.has(user_id)){
           const targetClient = clients.get(user_id);
           targetClient.send(data);
+          console.log(data.length,data.length/1024);
         }
       }
     }

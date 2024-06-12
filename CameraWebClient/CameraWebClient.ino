@@ -10,6 +10,7 @@
 
 #define COMMAND_LENGTH 32
 #define EEPROM_SIZE 16
+#define CAMERA_LENGTH 8
 
 /******************EEPROM******************/
 const uint8_t eep_ssid[EEPROM_SIZE] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
@@ -24,6 +25,10 @@ const uint16_t websockets_server_port = 3000;
 using namespace websockets;
 WebsocketsClient client;
 
+uint8_t* camera_frame = nullptr;
+size_t frame_length = 0;
+size_t prev_frame_length = 0;
+uint8_t frame_size_raw = 5;
 /******************CARMERA******************/
 #define PWDN_GPIO_NUM 32
 #define RESET_GPIO_NUM -1
@@ -45,7 +50,7 @@ WebsocketsClient client;
 // 4 for flash led or 33 for normal led
 #define LED_GPIO_NUM 4
 /*******************************************/
-unsigned long pre_update = 0UL;
+unsigned long pre_stream = 0UL;
 unsigned long pre_ping = 0UL;
 uint16_t frame_per_second = 100;
 uint8_t ping_res = 0;
@@ -221,7 +226,8 @@ void command_service() {
     Serial.print("frame interval: ");
     Serial.println(frame_per_second);
   } else if (cmd_text == "size") {
-    frame_size_change(temp_text.toInt());
+    frame_size_raw = temp_text.toInt();
+    frame_size_change(frame_size_raw);
   } else if (cmd_text == "cam") {
     if (temp_text == "on") camera_onoff = true;
     else camera_onoff = false;
@@ -278,8 +284,6 @@ void command_process(char ch) {
   }
 }
 /*******************************************/
-uint8_t* camera_frame = nullptr;
-size_t frame_length = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -309,30 +313,13 @@ void loop() {
   if (wifi_able) {
     if (client.available()) {
       client.poll();
-      if (camera_onoff && millisec > pre_update + frame_per_second) {
-        pre_update = millisec;
-        camera_fb_t* fb = esp_camera_fb_get();
-        if (fb) {
-          // 카메라 프레임 및 길이를 전역 변수에 저장
-          camera_frame = fb->buf;
-          frame_length = fb->len;
-          // WebSocket을 통해 바이너리 데이터 전송
-          client.sendBinary(reinterpret_cast<char*>(camera_frame), frame_length);
-          esp_camera_fb_return(fb);
-        }
-      }
-      if (millisec > pre_ping + 2500) {
-        pre_ping = millisec;
-        ping_res += 1;
-        client.ping();
-      }
-    } else {
-      if (millisec > pre_ping + 2500) {
-        pre_ping = millisec;
-        ping_res += 1;
-      }
+      camera_stream(millisec);
     }
-    if (ping_res > 2){
+    if (millisec > pre_ping + 2500) {
+      pre_ping = millisec;
+      ping_res += 1;
+      if(client.available()) client.ping();
+    }else if(ping_res > 2){
       ping_res = 0;
       websocket_connect();
     }
@@ -346,6 +333,28 @@ void websocket_connect() {
     client.onMessage(onMessageCallback);
     client.onEvent(onEventsCallback);
     client.send("MAC:" + WiFi.macAddress());
+  }
+}
+
+void camera_stream(unsigned long millisec){
+  if (camera_onoff && millisec > pre_stream + frame_per_second) {
+    pre_stream = millisec;
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (fb) {
+      // 카메라 프레임 및 길이를 전역 변수에 저장
+      camera_frame = fb->buf;
+      frame_length = fb->len;
+      // WebSocket을 통해 바이너리 데이터 전송
+      bool pic_stream = true;
+      
+      if(frame_size_raw==5){
+        if(prev_frame_length > frame_length-CAMERA_LENGTH && prev_frame_length < frame_length+CAMERA_LENGTH) pic_stream = false;
+        else prev_frame_length = frame_length;
+      }
+
+      if(pic_stream) client.sendBinary(reinterpret_cast<char*>(camera_frame), frame_length);
+      esp_camera_fb_return(fb);
+    }
   }
 }
 
@@ -379,7 +388,6 @@ void camera_init() {
   config.fb_count = 1;
   // Initialize the camera
   esp_err_t err = esp_camera_init(&config);
-
   if (err != ESP_OK) {
     esp_camera_deinit();
     Serial.printf("Camera init failed with error 0x%x", err);
@@ -388,11 +396,19 @@ void camera_init() {
 
 void frame_size_change(uint8_t frame_size) {
   //if(frame_size>12) frame_size = 12;
-  if (frame_size > 6) frame_size = 6;
+  if (frame_size >= 5){
+    frame_size = 5;
+    frame_per_second = 100;
+  }else{
+    if(frame_size == 1) frame_per_second = 80;
+    else if(frame_size == 2) frame_per_second = 98;
+    else if(frame_size == 3) frame_per_second = 145;
+    else if(frame_size == 4) frame_per_second = 192;
+    else frame_per_second = 50;
+  }
   sensor_t* s = esp_camera_sensor_get();
   if (s->pixformat == PIXFORMAT_JPEG) {
     Serial.println(s->set_framesize(s, (framesize_t)frame_size));
-    frame_per_second = 10 + frame_size * 10;
   }
 }
 
@@ -407,7 +423,7 @@ void onMessageCallback(WebsocketsMessage message) {
 void onEventsCallback(WebsocketsEvent event, String data) {
   if (event == WebsocketsEvent::ConnectionClosed) {
     camera_onoff = false;
-    Serial.print("server err!");
+    Serial.println("server err!");
   } else if (event == WebsocketsEvent::GotPong) {
     ping_res = 0;
   }
