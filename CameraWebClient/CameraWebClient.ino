@@ -10,7 +10,6 @@
 
 #define COMMAND_LENGTH 32
 #define EEPROM_SIZE 16
-#define LED_GPIO_NUM 4
 
 /******************EEPROM******************/
 const uint8_t eep_ssid[EEPROM_SIZE] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
@@ -333,7 +332,10 @@ void loop() {
         ping_res += 1;
       }
     }
-    if (ping_res++ > 2) websocket_connect();
+    if (ping_res > 2){
+      ping_res = 0;
+      websocket_connect();
+    }
   }
   if (Serial.available()) command_process(Serial.read());
 }
@@ -404,6 +406,7 @@ void onMessageCallback(WebsocketsMessage message) {
 
 void onEventsCallback(WebsocketsEvent event, String data) {
   if (event == WebsocketsEvent::ConnectionClosed) {
+    camera_onoff = false;
     Serial.print("server err!");
   } else if (event == WebsocketsEvent::GotPong) {
     ping_res = 0;
