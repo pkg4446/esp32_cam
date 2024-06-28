@@ -25,9 +25,6 @@ const uint16_t websockets_server_port = 3000;
 using namespace websockets;
 WebsocketsClient client;
 
-uint8_t* camera_frame = nullptr;
-size_t frame_length = 0;
-size_t prev_frame_length = 0;
 uint8_t frame_size_raw = 5;
 /******************CARMERA******************/
 #define PWDN_GPIO_NUM 32
@@ -341,18 +338,8 @@ void camera_stream(unsigned long millisec){
     pre_stream = millisec;
     camera_fb_t* fb = esp_camera_fb_get();
     if (fb) {
-      // 카메라 프레임 및 길이를 전역 변수에 저장
-      camera_frame = fb->buf;
-      frame_length = fb->len;
       // WebSocket을 통해 바이너리 데이터 전송
-      bool pic_stream = true;
-      
-      if(frame_size_raw==5){
-        if(prev_frame_length > frame_length-CAMERA_LENGTH && prev_frame_length < frame_length+CAMERA_LENGTH) pic_stream = false;
-        else prev_frame_length = frame_length;
-      }
-
-      if(pic_stream) client.sendBinary(reinterpret_cast<char*>(camera_frame), frame_length);
+      client.sendBinary(reinterpret_cast<char*>(fb->buf), fb->len);
       esp_camera_fb_return(fb);
     }
   }
