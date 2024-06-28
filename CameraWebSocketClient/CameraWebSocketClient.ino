@@ -219,7 +219,7 @@ void command_service() {
     }
   } else if (cmd_text == "led") {
     uint8_t duty = temp_text.toInt();
-    ledcWrite(LED_GPIO_NUM, duty);
+    //ledcWrite(LED_GPIO_NUM, duty);
   } else if (cmd_text == "fps") {
     uint8_t cmd_fps = temp_text.toInt();
     if (cmd_fps != 0) frame_per_second = 1000 / cmd_fps;
@@ -291,7 +291,7 @@ void setup() {
   //SPI.begin(SCK, MISO, MOSI, SS);
   SPI.begin(14, 2, 15, 13);
   //chipSelect = SS
-  ledcAttach(LED_GPIO_NUM, 5000, 8);
+  //ledcAttach(LED_GPIO_NUM, 5000, 8);
   sd_init(13, &sd_card_mode);
   if (!EEPROM.begin(EEPROM_SIZE * 2)) {
     Serial.println("Failed to initialise eeprom");
