@@ -11,6 +11,7 @@ const clients = new Map();
 const cameras = new Map();
 const users   = new Map();
 // 클라이언트 연결 시 처리
+let stream_size = 0;
 socket.on('connection', function connection(ws) {
   // 클라이언트별 ID 생성 (예: 클라이언트 IP 주소)
   const client_id = ws._socket.remoteAddress+":"+Math.floor(Math.random() * 10);
@@ -49,7 +50,9 @@ socket.on('connection', function connection(ws) {
         if(clients.has(user_id)){
           const targetClient = clients.get(user_id);
           targetClient.send(data);
-          console.log(data.length,data.length/1024);
+          const stream_data = data.length/1024;
+          stream_size += stream_data;
+          console.log(stream_size/1024,stream_data);
         }
       }
     }
@@ -58,6 +61,7 @@ socket.on('connection', function connection(ws) {
   ws.on('close', function() {
     console.log('Client disconnected');
     // 클라이언트가 연결을 끊었을 때 메시지 보내기
+    stream_size=0;
     if (users.has(MAC_addr) && users.get(MAC_addr) == client_id){
       if (cameras.has(MAC_addr)){
         const camera_id = cameras.get(MAC_addr);

@@ -1,21 +1,5 @@
 #include "uart_print.h"
 
-void nextion_print(HardwareSerial *uart, String cmd) {
-  uart->print(cmd);
-  uart->write(0xFF);
-  uart->write(0xFF);
-  uart->write(0xFF);
-}
-
-void nextion_display(String IDs, uint16_t values, HardwareSerial *uart) {
-  String cmd;
-  char buf[8] = { 0 };
-  sprintf(buf, "%d", values);
-  cmd = IDs + ".val=";
-  cmd += buf;
-  nextion_print(uart, cmd);
-}
-
 void serial_err_msg(HardwareSerial *uart, char *msg) {
   uart->print("wrong cmd: ");
   uart->println(msg);
